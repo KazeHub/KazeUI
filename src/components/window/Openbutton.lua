@@ -1,285 +1,267 @@
 local OpenButton = {}
 
-local Creator = require("../../modules/Creator")
-local New = Creator.New
-local Tween = Creator.Tween
+--[[
+	KazeUI OpenButton module.
 
+	This is KazeUI's own open button (the round/square icon button with the
+	neon border that shows while the window is minimized), lifted out of
+	UI-Test into a standalone module with the same shape as a typical
+	OpenButton.New(Window) module.
 
-local cloneref = (cloneref or clonereference or function(instance) return instance end)
+	KazeUI keeps its helpers as file-local functions, so instead of requiring
+	a Creator module this takes them through `Window.Deps`:
 
+	Window = {
+		Parent      = ScreenGui the button lives in (KazeUI_OpenButton gui),
+		Icon        = icon name / rbxassetid / url,
+		Size        = UDim2 (default 48x48),
+		Shape       = "Circle" | "Square" (default "Circle"),
+		Hidable     = true  -> only visible while the window is minimized
+		              false -> always visible (default true),
+		Position    = UDim2 (default 24, 85),
+		OnClick     = function() called on a click (not a drag) end,
+		Deps = {
+			KazeUI, TweenService, UserInputService,
+			FormatImage, ScheduleImageSwap, StartNeonLoop, StopNeonLoop,
+			TWEEN_SPRING,
+			GetScale = function() return current UI scale end,
+		},
+	}
+]]
 
-local UserInputService = cloneref(game:GetService("UserInputService"))
-
+local DRAG_THRESHOLD = 8 -- pixels of movement before a press counts as a drag
 
 function OpenButton.New(Window)
-    local OpenButtonMain = {
-        Button = nil
-    }
-    
-    local Icon
-    
-    
-    
-    -- Icon = New("ImageLabel", {
-    --     Image = "",
-    --     Size = UDim2.new(0,22,0,22),
-    --     Position = UDim2.new(0.5,0,0.5,0),
-    --     LayoutOrder = -1,
-    --     AnchorPoint = Vector2.new(0.5,0.5),
-    --     BackgroundTransparency = 1,
-    --     Name = "Icon"
-    -- })
+	local Deps = Window.Deps
+	local KazeUI = Deps.KazeUI
+	local TweenService = Deps.TweenService
+	local UserInputService = Deps.UserInputService
+	local FormatImage = Deps.FormatImage
+	local ScheduleImageSwap = Deps.ScheduleImageSwap
+	local StartNeonLoop = Deps.StartNeonLoop
+	local StopNeonLoop = Deps.StopNeonLoop
+	local TWEEN_SPRING = Deps.TWEEN_SPRING
+	local GetScale = Deps.GetScale or function() return 1 end
 
-    local Title = New("TextLabel", {
-        Text = Window.Title,
-        TextSize = 17,
-        FontFace = Font.new(Creator.Font, Enum.FontWeight.Medium),
-        BackgroundTransparency = 1,
-        AutomaticSize = "XY",
-    })
+	local OpenButtonMain = {
+		Button = nil,
+	}
 
-    local Drag = New("Frame", {
-        Size = UDim2.new(0,44-8,0,44-8),
-        BackgroundTransparency = 1, 
-        Name = "Drag",
-    }, {
-        New("ImageLabel", {
-            Image = Creator.Icon("move")[1],
-            ImageRectOffset = Creator.Icon("move")[2].ImageRectPosition,
-            ImageRectSize = Creator.Icon("move")[2].ImageRectSize,
-            Size = UDim2.new(0,18,0,18),
-            BackgroundTransparency = 1,
-            Position = UDim2.new(0.5,0,0.5,0),
-            AnchorPoint = Vector2.new(0.5,0.5),
-            ThemeTag = {
-                ImageColor3 = "Icon",
-            },
-            ImageTransparency = .3,
-        })
-    })
-    local Divider = New("Frame", {
-        Size = UDim2.new(0,1,1,0),
-        Position = UDim2.new(0,20+16,0.5,0),
-        AnchorPoint = Vector2.new(0,0.5),
-        BackgroundColor3 = Color3.new(1,1,1),
-        BackgroundTransparency = .9,
-    })
+	local ButtonSize = Window.Size or UDim2.fromOffset(48, 48)
+	local Hidable = Window.Hidable ~= false
+	local Shape = "Circle"
+	local Draggable = true
+	local Enabled = true
+	local IconSpec = Window.Icon or "house"
 
-    local Container = New("Frame", {
-        Size = UDim2.new(0,0,0,0),
-        Position = UDim2.new(0.5,0,0,6+44/2),
-        AnchorPoint = Vector2.new(0.5,0.5),
-        Parent = Window.Parent,
-        BackgroundTransparency = 1,
-        Active = true,
-        Visible = false,
-    })
+	local Button = Instance.new("TextButton")
+	Button.Name = "OpenButton"
+	Button.Size = ButtonSize
+	Button.Position = Window.Position or UDim2.new(0, 24, 0, 85)
+	Button.BackgroundTransparency = 1
+	Button.Text = ""
+	Button.AutoButtonColor = false
+	Button.Visible = not Hidable
+	Button.ZIndex = 999
+	Button.Parent = Window.Parent
 
+	local ButtonCorner = Instance.new("UICorner", Button)
 
-    local UIScale = New("UIScale", {
-        Scale = 1,
-    })
+	local ButtonScale = Instance.new("UIScale")
+	ButtonScale.Scale = 1
+	ButtonScale.Parent = Button
 
-    local Button = New("Frame", {
-        Size = UDim2.new(0,0,0,44),
-        AutomaticSize = "X",
-        Parent = Container,
-        Active = false,
-        BackgroundTransparency = .25,
-        ZIndex = 99,
-        BackgroundColor3 = Color3.new(0,0,0),
-    }, {
-        UIScale,
-	    New("UICorner", {
-            CornerRadius = UDim.new(1,0)
-        }),
-        New("UIStroke", {
-            Thickness = 1,
-            ApplyStrokeMode = "Border",
-            Color = Color3.new(1,1,1),
-            Transparency = 0,
-        }, {
-            New("UIGradient", {
-                Color = ColorSequence.new(Color3.fromHex("40c9ff"), Color3.fromHex("e81cff"))
-            })
-        }),
-        Drag,
-        Divider,
-        
-        New("UIListLayout", {
-            Padding = UDim.new(0, 4),
-            FillDirection = "Horizontal",
-            VerticalAlignment = "Center",
-        }),
-        
-        New("TextButton",{
-            AutomaticSize = "XY",
-            Active = true,
-            BackgroundTransparency = 1, -- .93
-            Size = UDim2.new(0,0,0,44-(4*2)),
-            --Position = UDim2.new(0,20+16+16+1,0,0),
-            BackgroundColor3 = Color3.new(1,1,1),
-        }, {
-            New("UICorner", {
-                CornerRadius = UDim.new(1,-4)
-            }),
-            Icon,
-            New("UIListLayout", {
-                Padding = UDim.new(0, Window.UIPadding),
-                FillDirection = "Horizontal",
-                VerticalAlignment = "Center",
-            }),
-            Title,
-            New("UIPadding", {
-                PaddingLeft = UDim.new(0,7+4),
-                PaddingRight = UDim.new(0,7+4),
-            }),
-        }),
-        New("UIPadding", {
-            PaddingLeft = UDim.new(0,4),
-            PaddingRight = UDim.new(0,4),
-        })
-    })
-    
-    OpenButtonMain.Button = Button
-    
-    
-    
-    function OpenButtonMain:SetIcon(newIcon)
-        if Icon then
-            Icon:Destroy()
-        end
-        if newIcon then
-            Icon = Creator.Image(
-                newIcon,
-                Window.Title,
-                0,
-                Window.Folder,
-                "OpenButton",
-                true,
-                Window.IconThemed
-            )
-            Icon.Size = UDim2.new(0,22,0,22)
-            Icon.LayoutOrder = -1
-            Icon.Parent = OpenButtonMain.Button.TextButton
-        end
-    end
-    
-    if Window.Icon then
-        OpenButtonMain:SetIcon(Window.Icon)
-    end
-    
-    
-    
-    Creator.AddSignal(Button:GetPropertyChangedSignal("AbsoluteSize"), function()
-        Container.Size = UDim2.new(
-            0, Button.AbsoluteSize.X,
-            0, Button.AbsoluteSize.Y
-        )
-    end)
-    
-    Creator.AddSignal(Button.TextButton.MouseEnter, function()
-        Tween(Button.TextButton, .1, {BackgroundTransparency = .93}):Play()
-    end)
-    Creator.AddSignal(Button.TextButton.MouseLeave, function()
-        Tween(Button.TextButton, .1, {BackgroundTransparency = 1}):Play()
-    end)
-    
-    local DragModule = Creator.Drag(Container)
-    
-    
-    function OpenButtonMain:Visible(v)
-        Container.Visible = v
-    end
-    
-    function OpenButtonMain:SetScale(scale)
-        UIScale.Scale = scale
-    end
-    
-    function OpenButtonMain:Edit(OpenButtonConfig)
-        local OpenButtonModule = {
-            Title = OpenButtonConfig.Title,
-            Icon = OpenButtonConfig.Icon,
-            Enabled = OpenButtonConfig.Enabled,
-            Position = OpenButtonConfig.Position,
-            OnlyIcon = OpenButtonConfig.OnlyIcon or false,
-            Draggable = OpenButtonConfig.Draggable or nil,
-            OnlyMobile = OpenButtonConfig.OnlyMobile,
-            CornerRadius = OpenButtonConfig.CornerRadius or UDim.new(1, 0),
-            StrokeThickness = OpenButtonConfig.StrokeThickness or 2,
-            Scale = OpenButtonConfig.Scale or 1,
-            Color = OpenButtonConfig.Color 
-                or ColorSequence.new(Color3.fromHex("40c9ff"), Color3.fromHex("e81cff")),
-        }
-        
-        -- wtf lol
-        
-        if OpenButtonModule.Enabled == false then
-            Window.IsOpenButtonEnabled = false
-        end
-        
-        if OpenButtonModule.OnlyMobile ~= false then
-            OpenButtonModule.OnlyMobile = true
-        else
-            Window.IsPC = false
-        end
-        
-        
-        if OpenButtonModule.Draggable == false and Drag and Divider then
-            Drag.Visible = OpenButtonModule.Draggable
-            Divider.Visible = OpenButtonModule.Draggable
-            
-            if DragModule then
-                DragModule:Set(OpenButtonModule.Draggable)
-            end
-        end
-        
-        if OpenButtonModule.Position and Container then
-            Container.Position = OpenButtonModule.Position
-        end
-        
-        if OpenButtonModule.OnlyIcon == true and Title then
-            Title.Visible = false
-            Button.TextButton.UIPadding.PaddingLeft = UDim.new(0,7)
-            Button.TextButton.UIPadding.PaddingRight = UDim.new(0,7)
-        elseif OpenButtonModule.OnlyIcon == false then
-            Title.Visible = true
-            Button.TextButton.UIPadding.PaddingLeft = UDim.new(0,7+4)
-            Button.TextButton.UIPadding.PaddingRight = UDim.new(0,7+4)
-        end
-        
-        --OpenButtonMain:Visible((not OpenButtonModule.OnlyMobile) or (not Window.IsPC))
-        
-        --if not OpenButton.Visible then return end
-        
-        if Title then
-            if OpenButtonModule.Title then
-                Title.Text = OpenButtonModule.Title
-                Creator:ChangeTranslationKey(Title, OpenButtonModule.Title)
-            elseif OpenButtonModule.Title == nil then
-                --Title.Visible = false
-            end
-        end
-        
-        if OpenButtonModule.Icon then
-            OpenButtonMain:SetIcon(OpenButtonModule.Icon)
-        end
+	local Icon = Instance.new("ImageLabel")
+	Icon.Name = "Icon"
+	Icon.Size = UDim2.fromScale(1, 1)
+	Icon.Position = UDim2.fromScale(0.5, 0.5)
+	Icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	Icon.BackgroundTransparency = 0
+	Icon.ScaleType = Enum.ScaleType.Fit
+	Icon.ZIndex = 1000
+	Icon.Parent = Button
 
-        Button.UIStroke.UIGradient.Color = OpenButtonModule.Color
-        if Glow then
-            Glow.UIGradient.Color = OpenButtonModule.Color
-        end
+	local IconCorner = Instance.new("UICorner", Icon)
+	KazeUI:AddPanel(Icon, 0.02)
+	KazeUI:OnThemeChanged(Icon, function(t) Icon.ImageColor3 = t.Text end)
 
-        Button.UICorner.CornerRadius = OpenButtonModule.CornerRadius
-        Button.TextButton.UICorner.CornerRadius = UDim.new(OpenButtonModule.CornerRadius.Scale, OpenButtonModule.CornerRadius.Offset-4)
-        Button.UIStroke.Thickness = OpenButtonModule.StrokeThickness
-        
-        OpenButtonMain:SetScale(OpenButtonModule.Scale)
-    end
+	local Stroke = Instance.new("UIStroke")
+	Stroke.Name = "Stroke"
+	Stroke.Thickness = 1.5
+	Stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	Stroke.Parent = Icon
+	KazeUI:RegisterBorder(Stroke)
+	StartNeonLoop(Stroke)
 
-    return OpenButtonMain
+	OpenButtonMain.Button = Button
+
+	local function ApplyShape(shape)
+		shape = tostring(shape or "Circle"):lower()
+		if shape == "square" then
+			Shape = "Square"
+			local side = math.min(ButtonSize.X.Offset, ButtonSize.Y.Offset)
+			if side <= 0 then side = 48 end
+			local radius = UDim.new(0, math.max(8, math.floor(side * 0.22)))
+			ButtonCorner.CornerRadius = radius
+			IconCorner.CornerRadius = radius
+		else
+			Shape = "Circle"
+			ButtonCorner.CornerRadius = UDim.new(1, 0)
+			IconCorner.CornerRadius = UDim.new(1, 0)
+		end
+	end
+	ApplyShape(Window.Shape)
+
+	function OpenButtonMain:SetIcon(newIcon)
+		if not newIcon or newIcon == "" then return end
+		IconSpec = newIcon
+		Icon.Image = FormatImage(newIcon)
+		ScheduleImageSwap(Icon, "Image", newIcon)
+	end
+	OpenButtonMain:SetIcon(IconSpec)
+
+	function OpenButtonMain:SetShape(shape)
+		ApplyShape(shape)
+	end
+
+	function OpenButtonMain:GetShape()
+		return Shape
+	end
+
+	function OpenButtonMain:SetScale(scale)
+		ButtonScale.Scale = scale or 1
+	end
+
+	function OpenButtonMain:SetPosition(position)
+		if position then Button.Position = position end
+	end
+
+	-- Shows/hides the button. Showing pops it in with the same spring the
+	-- window minimize uses; hiding is instant.
+	function OpenButtonMain:Visible(v)
+		if v then
+			if Button.Visible then return end
+			Button.Visible = true
+			Button.Size = UDim2.fromOffset(0, 0)
+			TweenService:Create(Button, TWEEN_SPRING, {Size = ButtonSize}):Play()
+		else
+			Button.Visible = false
+		end
+	end
+
+	-- Called by the window when it minimizes/restores. When Hidable is false
+	-- the button is always on screen and this is a no-op.
+	function OpenButtonMain:SetMinimized(minimized)
+		if not Hidable or not Enabled then return end
+		OpenButtonMain:Visible(minimized)
+	end
+
+	-- Drag / click: a press that moves less than DRAG_THRESHOLD is a click and
+	-- fires Window.OnClick; anything further drags the button. Only the one
+	-- active input is processed, and everything stops on release.
+	local dragInput, dragStart, startPos, dragMoved
+
+	local beganConn = Button.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+			dragStart = input.Position
+			startPos = Button.Position
+			dragMoved = false
+		end
+	end)
+
+	local changedConn = UserInputService.InputChanged:Connect(function(input)
+		if not dragInput or input ~= dragInput or not dragStart then return end
+		local delta = input.Position - dragStart
+		if dragMoved or delta.Magnitude > DRAG_THRESHOLD then
+			if not Draggable then return end
+			dragMoved = true
+			local scale = GetScale() * ButtonScale.Scale
+			Button.Position = UDim2.new(
+				0, startPos.X.Offset + (delta.X / scale),
+				0, startPos.Y.Offset + (delta.Y / scale)
+			)
+		end
+	end)
+
+	local endedConn = UserInputService.InputEnded:Connect(function(input)
+		if not dragInput or input ~= dragInput then return end
+		if not dragMoved and Window.OnClick then
+			Window.OnClick()
+		end
+		dragInput, dragStart, startPos, dragMoved = nil, nil, nil, false
+	end)
+
+	Button.Destroying:Connect(function()
+		beganConn:Disconnect()
+		changedConn:Disconnect()
+		endedConn:Disconnect()
+		StopNeonLoop(Stroke)
+	end)
+
+	function OpenButtonMain:Edit(OpenButtonConfig)
+		OpenButtonConfig = OpenButtonConfig or {}
+		local OpenButtonModule = {
+			Icon = OpenButtonConfig.Icon,
+			Enabled = OpenButtonConfig.Enabled,
+			Position = OpenButtonConfig.Position,
+			Size = OpenButtonConfig.Size,
+			Shape = OpenButtonConfig.Shape,
+			Draggable = OpenButtonConfig.Draggable,
+			Hidable = OpenButtonConfig.Hidable,
+			Scale = OpenButtonConfig.Scale,
+		}
+
+		if OpenButtonModule.Enabled ~= nil then
+			Enabled = OpenButtonModule.Enabled and true or false
+			if not Enabled then
+				Button.Visible = false
+			elseif not Hidable then
+				Button.Visible = true
+			end
+		end
+
+		if OpenButtonModule.Draggable ~= nil then
+			Draggable = OpenButtonModule.Draggable and true or false
+		end
+
+		if OpenButtonModule.Hidable ~= nil then
+			Hidable = OpenButtonModule.Hidable and true or false
+			if Enabled then
+				Button.Visible = not Hidable
+			end
+		end
+
+		if OpenButtonModule.Size then
+			ButtonSize = OpenButtonModule.Size
+			Button.Size = ButtonSize
+		end
+
+		if OpenButtonModule.Shape then
+			ApplyShape(OpenButtonModule.Shape)
+		elseif OpenButtonModule.Size then
+			-- Square corner radius depends on the size, so refresh it
+			ApplyShape(Shape)
+		end
+
+		if OpenButtonModule.Position then
+			OpenButtonMain:SetPosition(OpenButtonModule.Position)
+		end
+
+		if OpenButtonModule.Icon then
+			OpenButtonMain:SetIcon(OpenButtonModule.Icon)
+		end
+
+		if OpenButtonModule.Scale then
+			OpenButtonMain:SetScale(OpenButtonModule.Scale)
+		end
+	end
+
+	function OpenButtonMain:Destroy()
+		Button:Destroy()
+	end
+
+	return OpenButtonMain
 end
-
-
 
 return OpenButton
